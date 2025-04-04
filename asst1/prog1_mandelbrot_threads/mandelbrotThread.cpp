@@ -35,7 +35,21 @@ void workerThreadStart(WorkerArgs * const args) {
     // program that uses two threads, thread 0 could compute the top
     // half of the image and thread 1 could compute the bottom half.
 
-    printf("Hello world from thread %d\n", args->threadId);
+    int startRow, numRow, id;
+
+    id = args->threadId;
+    numRow = args->height / args->numThreads;
+    startRow = id * numRow;
+    if(id == args->numThreads-1){
+        numRow = args->height - startRow;
+    }
+
+    double tstart = CycleTimer::currentSeconds();
+    mandelbrotSerial(args->x0, args->y0, args->x1, args->y1, 
+        args->width, args->height, startRow, numRow, args->maxIterations,
+        args->output);
+    double tend = CycleTimer::currentSeconds();
+    printf("Thread %d: num row %d, [%.3f] ms\n", args->threadId, numRow, (tend - tstart));
 }
 
 //
