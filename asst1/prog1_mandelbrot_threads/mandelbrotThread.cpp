@@ -35,21 +35,25 @@ void workerThreadStart(WorkerArgs * const args) {
     // program that uses two threads, thread 0 could compute the top
     // half of the image and thread 1 could compute the bottom half.
 
-    int startRow, numRow, id;
+    int startRow, endRow; 
+    int id, num_threads, height;
+    const int batch_size = 16;
+    double total_time = 0;
 
     id = args->threadId;
-    numRow = args->height / args->numThreads;
-    startRow = id * numRow;
-    if(id == args->numThreads-1){
-        numRow = args->height - startRow;
-    }
+    num_threads = args->numThreads;
+    height = args->height;
 
-    double tstart = CycleTimer::currentSeconds();
-    mandelbrotSerial(args->x0, args->y0, args->x1, args->y1, 
-        args->width, args->height, startRow, numRow, args->maxIterations,
-        args->output);
-    double tend = CycleTimer::currentSeconds();
-    printf("Thread %d: num row %d, [%.3f] ms\n", args->threadId, numRow, (tend - tstart));
+    for(startRow = batch_size * id; startRow < height; startRow += batch_size * num_threads){
+        double tstart = CycleTimer::currentSeconds();
+        endRow = std::min(startRow + batch_size, height);
+        mandelbrotSerial(args->x0, args->y0, args->x1, args->y1, 
+            args->width, args->height, startRow, endRow-startRow, args->maxIterations,
+            args->output);
+        double tend = CycleTimer::currentSeconds();
+        total_time += (tend - tstart);
+    }
+    printf("Thread %d: [%.3f] ms\n", args->threadId, total_time);
 }
 
 //
