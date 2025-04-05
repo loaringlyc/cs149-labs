@@ -249,7 +249,45 @@ void clampedExpVector(float* values, int* exponents, float* output, int N) {
   // Your solution should work for any value of
   // N and VECTOR_WIDTH, not just when VECTOR_WIDTH divides N
   //
-  
+  __cs149_vec_float x;
+  __cs149_vec_int e;
+  __cs149_mask mask, maskPositive, maskZero, maskMax;
+  __cs149_vec_int ones = _cs149_vset_int(1);
+  __cs149_vec_int zero = _cs149_vset_int(0);
+  __cs149_vec_float result;
+  __cs149_vec_float maxVal = _cs149_vset_float(9.999999f);
+
+  bool value[4];
+
+  printf("n = %d\n", N);
+  for(int i = 0; i < N; i+=VECTOR_WIDTH){
+    int num = VECTOR_WIDTH;
+    if(i + num > N)
+      num = N - i;
+    mask = _cs149_init_ones(num); // 总体的mask，判断总个数有没有超过
+
+    _cs149_vload_float(x, values+i, mask);
+    _cs149_vload_int(e, exponents+i, mask);
+    result = _cs149_vset_float(1.f); //初始化result，注意每个循环都需要！
+
+    maskPositive = _cs149_init_ones(0);
+    _cs149_vgt_int(maskPositive, e, zero, mask);
+
+    // _cs149_veq_int(maskZero, e, zero, mask); // if
+    // _cs149_vset_float(result, 1.f, maskZero); 
+    while(_cs149_cntbits(maskPositive)){ // else while
+      _cs149_vmult_float(result, result, x, maskPositive); 
+      _cs149_vsub_int(e, e, ones, mask);
+
+      maskPositive = _cs149_init_ones(0);
+      _cs149_vgt_int(maskPositive, e, zero, mask);
+    }
+    _cs149_vgt_float(maskMax, result, maxVal, mask);
+    _cs149_vset_float(result, 9.999999f, maskMax);
+    
+    _cs149_vstore_float(output+i, result, mask);
+  }
+
 }
 
 // returns the sum of all elements in values
