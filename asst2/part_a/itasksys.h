@@ -1,6 +1,11 @@
 #ifndef _ITASKSYS_H
 #define _ITASKSYS_H
 #include <vector>
+#include <thread>
+#include <queue>
+#include <functional>
+#include <mutex>
+#include <atomic>
 
 typedef int TaskID;
 

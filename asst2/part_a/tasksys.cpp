@@ -107,16 +107,43 @@ const char* TaskSystemParallelThreadPoolSpinning::name() {
     return "Parallel + Thread Pool + Spin";
 }
 
-TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): ITaskSystem(num_threads) {
+TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads)
+    : ITaskSystem(num_threads), num_threads_(num_threads), running_(true), num_finished_(0) {
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    num_threads_ = num_threads;
+    
+    for (int t = 0; t < num_threads_; t++) {
+        workers_.emplace_back([this] {
+            while(running_) {
+                std::function<void()> func;
+                {
+                    std::unique_lock<std::mutex> lk(mtx_);
+                    if (!tasks_.empty()) {
+                        func = tasks_.front();
+                        tasks_.pop();
+                    } else {
+                        continue;
+                    }
+                }
+                if (func) {
+                    func();
+                    num_finished_++;
+                } // 如果没有task可以做，就spin
+            }
+        });
+    }
+    
 }
 
-TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {}
+TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
+    running_ = false;
+    for (auto& th : workers_) th.join();
+}
 
 void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_total_tasks) {
 
@@ -126,10 +153,17 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
     // method in Part A.  The implementation provided below runs all
     // tasks sequentially on the calling thread.
     //
+    num_total_tasks_ = num_total_tasks;
+    num_finished_ = 0;
 
-    for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
+    for(int i = 0; i < num_total_tasks; i++) {
+        // std::lock_guard<std::mutex> lk(mtx_); // push的时候不用的
+        tasks_.push([=] {
+            runnable->runTask(i, num_total_tasks);
+        });
     }
+
+    while (num_finished_ < num_total_tasks) {}    
 }
 
 TaskID TaskSystemParallelThreadPoolSpinning::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
