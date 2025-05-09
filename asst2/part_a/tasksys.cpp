@@ -157,13 +157,15 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
     num_finished_ = 0;
 
     for(int i = 0; i < num_total_tasks; i++) {
-        // std::lock_guard<std::mutex> lk(mtx_); // push的时候不用的
+        std::lock_guard<std::mutex> lk(mtx_); // push的时候不用的
         tasks_.push([=] {
             runnable->runTask(i, num_total_tasks);
         });
     }
 
-    while (num_finished_ < num_total_tasks) {}    
+    while (num_finished_ < num_total_tasks) {
+        std::this_thread::yield();
+    }    
 }
 
 TaskID TaskSystemParallelThreadPoolSpinning::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
