@@ -108,36 +108,31 @@ const char* TaskSystemParallelThreadPoolSpinning::name() {
 }
 
 TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads)
-    : ITaskSystem(num_threads), num_threads_(num_threads), running_(true), num_finished_(0) {
+    : ITaskSystem(num_threads), num_threads_(num_threads), running_(true), num_total_tasks_(0), curr_runnable_(nullptr), num_finished_(0), next_task_idx_(0) {
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
-    num_threads_ = num_threads;
     
     for (int t = 0; t < num_threads_; t++) {
         workers_.emplace_back([this] {
             while(running_) {
-                std::function<void()> func;
+                int task_idx = -1;
                 {
                     std::unique_lock<std::mutex> lk(mtx_);
-                    if (!tasks_.empty()) {
-                        func = tasks_.front();
-                        tasks_.pop();
-                    } else {
-                        continue;
+                    if(next_task_idx_ <= num_total_tasks_){
+                        task_idx = next_task_idx_++;
                     }
                 }
-                if (func) {
-                    func();
+                if (curr_runnable_ && task_idx != -1) {
+                    curr_runnable_->runTask(task_idx, num_total_tasks_);
                     num_finished_++;
-                } // 如果没有task可以做，就spin
+                }
             }
         });
     }
-    
 }
 
 TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
@@ -154,14 +149,9 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
     // tasks sequentially on the calling thread.
     //
     num_total_tasks_ = num_total_tasks;
+    curr_runnable_ = runnable;
     num_finished_ = 0;
-
-    for(int i = 0; i < num_total_tasks; i++) {
-        std::lock_guard<std::mutex> lk(mtx_); // push的时候不用的
-        tasks_.push([=] {
-            runnable->runTask(i, num_total_tasks);
-        });
-    }
+    next_task_idx_ = 0;
 
     while (num_finished_ < num_total_tasks) {
         std::this_thread::yield();
