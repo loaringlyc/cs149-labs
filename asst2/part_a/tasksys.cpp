@@ -180,7 +180,7 @@ const char* TaskSystemParallelThreadPoolSleeping::name() {
 }
 
 TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads)
-    : ITaskSystem(num_threads), num_threads_(num_threads), running_(true), num_finished_(0) {
+    : ITaskSystem(num_threads), num_threads_(num_threads), num_total_tasks_(0), running_(true), num_finished_(0) {
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
@@ -193,7 +193,7 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
                 std::function<void()> task;
                 {
                     std::unique_lock<std::mutex> lk(mtx_);
-                    cv_.wait(lk, [this] {return !running_ || !tasks_.empty();});
+                    consumer.wait(lk, [this] {return !running_ || !tasks_.empty();});
                     if (!running_) {
                         return;
                     }
@@ -202,6 +202,9 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
                 }
                 task();
                 num_finished_++;
+                if(num_finished_ >= num_total_tasks_){
+                    producer.notify_one();
+                }
             }
         });
     }
@@ -218,7 +221,7 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
         std::unique_lock<std::mutex> lk(mtx_);
         running_ = false;
     }
-    cv_.notify_all();
+    consumer.notify_all();
     for (auto& th: workers_) th.join();
 }
 
@@ -230,6 +233,7 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // method in Parts A and B.  The implementation provided below runs all
     // tasks sequentially on the calling thread.
     //
+    num_total_tasks_ = num_total_tasks;
     num_finished_ = 0;
     {
         std::unique_lock<std::mutex> lk(mtx_);
@@ -239,10 +243,9 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
             });
         }
     }
-    cv_.notify_all();
-    while (num_finished_ < num_total_tasks) {
-        std::this_thread::yield();
-    }
+    consumer.notify_all();
+    std::unique_lock<std::mutex> lk(mtx_);
+    producer.wait(lk, [=] { return num_finished_ >= num_total_tasks;});
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,

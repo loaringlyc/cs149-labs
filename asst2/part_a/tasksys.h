@@ -82,12 +82,14 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         void sync();
     private:
         int num_threads_;
+        int num_total_tasks_;
         std::atomic<bool> running_;
         std::atomic<int> num_finished_;
         std::vector<std::thread> workers_;
         std::queue<std::function<void()>> tasks_;
         std::mutex mtx_;
-        std::condition_variable cv_;
+        std::condition_variable consumer;
+        std::condition_variable producer;
 };
 
 #endif
