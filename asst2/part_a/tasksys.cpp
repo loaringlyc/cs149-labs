@@ -179,13 +179,32 @@ const char* TaskSystemParallelThreadPoolSleeping::name() {
     return "Parallel + Thread Pool + Sleep";
 }
 
-TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads): ITaskSystem(num_threads) {
+TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads)
+    : ITaskSystem(num_threads), num_threads_(num_threads), running_(true), num_finished_(0) {
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    for (int i = 0; i < num_threads_; i++) {
+        workers_.emplace_back([this] {
+            while (running_) {
+                std::function<void()> task;
+                {
+                    std::unique_lock<std::mutex> lk(mtx_);
+                    cv_.wait(lk, [this] {return !running_ || !tasks_.empty();});
+                    if (!running_) {
+                        return;
+                    }
+                    task = std::move(tasks_.front());
+                    tasks_.pop();
+                }
+                task();
+                num_finished_++;
+            }
+        });
+    }
 }
 
 TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
@@ -195,6 +214,12 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    {
+        std::unique_lock<std::mutex> lk(mtx_);
+        running_ = false;
+    }
+    cv_.notify_all();
+    for (auto& th: workers_) th.join();
 }
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_total_tasks) {
@@ -205,9 +230,18 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // method in Parts A and B.  The implementation provided below runs all
     // tasks sequentially on the calling thread.
     //
-
-    for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
+    num_finished_ = 0;
+    {
+        std::unique_lock<std::mutex> lk(mtx_);
+        for (int i = 0; i < num_total_tasks; ++i) {
+            tasks_.emplace([=] {
+                runnable->runTask(i, num_total_tasks);
+            });
+        }
+    }
+    cv_.notify_all();
+    while (num_finished_ < num_total_tasks) {
+        std::this_thread::yield();
     }
 }
 

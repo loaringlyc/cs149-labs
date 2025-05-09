@@ -6,6 +6,7 @@
 #include <functional>
 #include <mutex>
 #include <atomic>
+#include <condition_variable>
 
 typedef int TaskID;
 
