@@ -2,6 +2,15 @@
 #define _TASKSYS_H
 
 #include "itasksys.h"
+#include <thread>
+#include <queue>
+#include <functional>
+#include <mutex>
+#include <atomic>
+#include <condition_variable>
+#include <unordered_map>
+#include <set>
+#include <iostream>
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -59,6 +68,16 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
  * a thread pool. See definition of ITaskSystem in
  * itasksys.h for documentation of the ITaskSystem interface.
  */
+
+class Bulk {
+    public:
+        TaskID tid_;
+        IRunnable* runnable_;
+        std::atomic<int> next_idx_;
+        Bulk(TaskID tid_, IRunnable* runnable_)
+            : tid_(tid_), runnable_(runnable_), next_idx_(0){};
+};
+
 class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
     public:
         TaskSystemParallelThreadPoolSleeping(int num_threads);
@@ -68,6 +87,31 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         TaskID runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
                                 const std::vector<TaskID>& deps);
         void sync();
+    private:
+        int num_threads_;
+        int num_total_tasks_;
+        std::atomic<bool> running_;
+        std::atomic<int> num_finished_; // not used
+        std::atomic<int> task_idx_;
+        
+        // No dep tasks
+        std::mutex nodep_mtx_;
+        std::vector<TaskID> nodep_tasks_; 
+
+        std::vector<std::thread> workers_; // Threads
+        std::condition_variable consumer_; // Working threads cv
+        // deps related
+        std::mutex deps_mtx_; 
+        std::condition_variable deps_cv_;
+        std::unordered_map<TaskID, std::vector<TaskID>> deps_;
+        // id2task
+        std::mutex map_mtx_;
+        std::unordered_map<TaskID, std::shared_ptr<Bulk>> id2task_;
+        // ready queue related
+        std::mutex ready_mtx_;
+        std::queue<TaskID> ready_queue_; 
+
+        std::condition_variable sync_cv_;
 };
 
 #endif
