@@ -73,11 +73,14 @@ void exclusive_scan(int* input, int N, int* result)
     // to CUDA kernel functions (that you must write) to implement the
     // scan.
     int rounded_len = nextPow2(N);
+    
     for (int two_d = 1; two_d < rounded_len; two_d*=2) {
         int two_dplus1 = 2*two_d;
         int numThreads = (rounded_len + two_dplus1 - 1) / two_dplus1;
         int numBlocks = (numThreads + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+
         upsweep_kernel<<<numBlocks, THREADS_PER_BLOCK>>>(result, two_d, two_dplus1);
+
         cudaDeviceSynchronize();
     }
     int zero = 0;
@@ -86,7 +89,9 @@ void exclusive_scan(int* input, int N, int* result)
         int two_dplus1 = 2*two_d;
         int numThreads = (rounded_len + two_dplus1 - 1) / two_dplus1;
         int numBlocks = (numThreads + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+
         downsweep_kernel<<<numBlocks, THREADS_PER_BLOCK>>>(result, two_d, two_dplus1);
+
         cudaDeviceSynchronize();
     }
 }
@@ -174,6 +179,22 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
     return overallDuration; 
 }
 
+__global__ void mark_repeats(int* input, int* flag, int length) {
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx < length - 1) {
+        flag[idx] = (input[idx] == input[idx+1]) ? 1 : 0;
+    } else if (idx < length) {
+        flag[idx] = 0;
+    }
+}
+
+__global__ void write_indices(int* flag, int* sum, int* output, int length) {
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if(flag[idx] == 1 && idx < length) {
+        int pos = sum[idx];
+        output[pos] = idx;
+    }
+}
 
 // find_repeats --
 //
@@ -195,7 +216,33 @@ int find_repeats(int* device_input, int length, int* device_output) {
     // must ensure that the results of find_repeats are correct given
     // the actual array length.
 
-    return 0; 
+    int result = 0;
+    int* flag = nullptr;
+    int* sum = nullptr;
+    int rounded_len = nextPow2(length);
+    // int test[length]; 
+
+    cudaMalloc((void **) &flag, sizeof(int) * rounded_len);
+    int num_blocks = (length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    mark_repeats<<<num_blocks, THREADS_PER_BLOCK>>>(device_input, flag, length);
+
+    cudaMalloc((void **) &sum, sizeof(int) * rounded_len);
+    cudaMemcpy(sum, flag, sizeof(int) * length, cudaMemcpyDeviceToDevice);
+
+    exclusive_scan(flag, length, sum);
+
+    write_indices<<<num_blocks, THREADS_PER_BLOCK>>>(flag, sum, device_output, length);
+
+    cudaMemcpy(&result, sum+length-1, sizeof(int), cudaMemcpyDeviceToHost);
+
+    // cudaMemcpy(test, device_output, length * sizeof(int), cudaMemcpyDeviceToHost);
+    // for (int i = 0; i < result; i++) printf("%d\n", test[i]);
+    // printf("-----\n");
+    
+    cudaFree(sum);
+    cudaFree(flag);
+
+    return result; 
 }
 
 
