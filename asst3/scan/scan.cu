@@ -20,6 +20,7 @@
 inline void gpuAssert(cudaError_t code, const char * file, int line){
     if (code != cudaSuccess) {
         fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+        // exit(1); 
     }
 }
 
@@ -42,7 +43,7 @@ __global__ void
 upsweep_kernel(int* data, int rounded_len, int two_d, int two_dplus1) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int i = idx * two_dplus1;
-    if (i + two_dplus1 - 1 < rounded_len) {
+    if (i + two_dplus1 - 1 < rounded_len && i + two_dplus1 - 1 >= 0 && i + two_d - 1 >= 0 && i + two_d - 1 < rounded_len) {
         data[i+two_dplus1-1] += data[i+two_d-1];
     }
 }
@@ -51,7 +52,7 @@ __global__ void
 downsweep_kernel(int* data, int rounded_len, int two_d, int two_dplus1) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int i = idx * two_dplus1;
-    if (i + two_dplus1 - 1 < rounded_len) {
+    if (i + two_dplus1 - 1 < rounded_len && i + two_dplus1 - 1 >= 0 && i + two_d - 1 >= 0 && i + two_d - 1 < rounded_len) {
         int t = data[i+two_d-1];
         data[i+two_d-1] = data[i+two_dplus1-1];
         data[i+two_dplus1-1] += t;
@@ -86,11 +87,11 @@ void exclusive_scan(int* input, int N, int* result)
     // scan.
     int rounded_len = nextPow2(N);
     
-    for (int two_d = 1; two_d < rounded_len; two_d*=2) {
+    for (int two_d = 1; two_d < rounded_len/2; two_d*=2) {
         int two_dplus1 = 2*two_d;
         int numThreads = (rounded_len + two_dplus1 - 1) / two_dplus1;
         int numBlocks = (numThreads + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-
+        // printf("numThreads, num_blocks, two_d, two_dplus1: %d, %d, %d, %d\n", numThreads, numBlocks, two_d, two_dplus1);
         upsweep_kernel<<<numBlocks, THREADS_PER_BLOCK>>>(result, rounded_len, two_d, two_dplus1);
         POSTKERNEL
         cudaDeviceSynchronize();
@@ -101,7 +102,7 @@ void exclusive_scan(int* input, int N, int* result)
         int two_dplus1 = 2*two_d;
         int numThreads = (rounded_len + two_dplus1 - 1) / two_dplus1;
         int numBlocks = (numThreads + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-
+        // printf("numThreads, num_blocks, two_d, two_dplus1: %d, %d, %d, %d\n", numThreads, numBlocks, two_d, two_dplus1);
         downsweep_kernel<<<numBlocks, THREADS_PER_BLOCK>>>(result, rounded_len, two_d, two_dplus1);
         POSTKERNEL
         cudaDeviceSynchronize();
@@ -153,6 +154,9 @@ double cudaScan(int* inarray, int* end, int* resultarray)
     double endTime = CycleTimer::currentSeconds();
        
     cudaMemcpy(resultarray, device_result, (end - inarray) * sizeof(int), cudaMemcpyDeviceToHost);
+
+    cudaFree(device_input);
+    cudaFree(device_result);
 
     double overallDuration = endTime - startTime;
     return overallDuration; 
