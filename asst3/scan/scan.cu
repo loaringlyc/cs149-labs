@@ -14,6 +14,16 @@
 
 #define THREADS_PER_BLOCK 256
 
+#define CHK(ans) gpuAssert((ans), __FILE__, __LINE__);
+
+//Checker
+inline void gpuAssert(cudaError_t code, const char * file, int line){
+    if (code != cudaSuccess) {
+        fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+    }
+}
+
+#define POSTKERNEL CHK(cudaPeekAtLastError())
 
 // helper function to round an integer up to the next power of 2
 static inline int nextPow2(int n) {
@@ -29,22 +39,24 @@ static inline int nextPow2(int n) {
 
 // kernel function
 __global__ void
-upsweep_kernel(int* data, int two_d, int two_dplus1) {
+upsweep_kernel(int* data, int rounded_len, int two_d, int two_dplus1) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int i = idx * two_dplus1;
-    // if (i + two_dplus1 - 1 < N) {}
-    data[i+two_dplus1-1] += data[i+two_d-1];
+    if (i + two_dplus1 - 1 < rounded_len) {
+        data[i+two_dplus1-1] += data[i+two_d-1];
+    }
 }
 
 __global__ void
-downsweep_kernel(int* data, int two_d, int two_dplus1) {
+downsweep_kernel(int* data, int rounded_len, int two_d, int two_dplus1) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int i = idx * two_dplus1;
-    // if (i + two_d - 1 < N) {}
-    int t = data[i+two_d-1];
-    data[i+two_d-1] = data[i+two_dplus1-1];
-    // if (i + two_dplus1 - 1 < N) {}
-    data[i+two_dplus1-1] += t;
+    if (i + two_dplus1 - 1 < rounded_len) {
+        int t = data[i+two_d-1];
+        data[i+two_d-1] = data[i+two_dplus1-1];
+        data[i+two_dplus1-1] += t;
+    }
+    
 }
 // exclusive_scan --
 //
@@ -79,8 +91,8 @@ void exclusive_scan(int* input, int N, int* result)
         int numThreads = (rounded_len + two_dplus1 - 1) / two_dplus1;
         int numBlocks = (numThreads + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-        upsweep_kernel<<<numBlocks, THREADS_PER_BLOCK>>>(result, two_d, two_dplus1);
-
+        upsweep_kernel<<<numBlocks, THREADS_PER_BLOCK>>>(result, rounded_len, two_d, two_dplus1);
+        POSTKERNEL
         cudaDeviceSynchronize();
     }
     int zero = 0;
@@ -90,8 +102,8 @@ void exclusive_scan(int* input, int N, int* result)
         int numThreads = (rounded_len + two_dplus1 - 1) / two_dplus1;
         int numBlocks = (numThreads + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-        downsweep_kernel<<<numBlocks, THREADS_PER_BLOCK>>>(result, two_d, two_dplus1);
-
+        downsweep_kernel<<<numBlocks, THREADS_PER_BLOCK>>>(result, rounded_len, two_d, two_dplus1);
+        POSTKERNEL
         cudaDeviceSynchronize();
     }
 }
