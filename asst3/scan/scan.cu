@@ -27,6 +27,25 @@ static inline int nextPow2(int n) {
     return n;
 }
 
+// kernel function
+__global__ void
+upsweep_kernel(int* data, int two_d, int two_dplus1) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = idx * two_dplus1;
+    // if (i + two_dplus1 - 1 < N) {}
+    data[i+two_dplus1-1] += data[i+two_d-1];
+}
+
+__global__ void
+downsweep_kernel(int* data, int two_d, int two_dplus1) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = idx * two_dplus1;
+    // if (i + two_d - 1 < N) {}
+    int t = data[i+two_d-1];
+    data[i+two_d-1] = data[i+two_dplus1-1];
+    // if (i + two_dplus1 - 1 < N) {}
+    data[i+two_dplus1-1] += t;
+}
 // exclusive_scan --
 //
 // Implementation of an exclusive scan on global memory array `input`,
@@ -53,8 +72,23 @@ void exclusive_scan(int* input, int N, int* result)
     // on the CPU.  Your implementation will need to make multiple calls
     // to CUDA kernel functions (that you must write) to implement the
     // scan.
-
-
+    int rounded_len = nextPow2(N);
+    for (int two_d = 1; two_d < rounded_len; two_d*=2) {
+        int two_dplus1 = 2*two_d;
+        int numThreads = (rounded_len + two_dplus1 - 1) / two_dplus1;
+        int numBlocks = (numThreads + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        upsweep_kernel<<<numBlocks, THREADS_PER_BLOCK>>>(result, two_d, two_dplus1);
+        cudaDeviceSynchronize();
+    }
+    int zero = 0;
+    cudaMemcpy(result + rounded_len - 1, &zero, sizeof(int), cudaMemcpyHostToDevice);
+    for (int two_d = rounded_len / 2; two_d >= 1; two_d/=2) {
+        int two_dplus1 = 2*two_d;
+        int numThreads = (rounded_len + two_dplus1 - 1) / two_dplus1;
+        int numBlocks = (numThreads + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        downsweep_kernel<<<numBlocks, THREADS_PER_BLOCK>>>(result, two_d, two_dplus1);
+        cudaDeviceSynchronize();
+    }
 }
 
 
