@@ -1,2 +1,2 @@
 # cs149labs
-programming assignments from cs149: parallel computing
+Programming assignments from cs149: parallel computing
