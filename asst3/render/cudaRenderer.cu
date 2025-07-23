@@ -50,6 +50,9 @@ __constant__ float  cuConstNoise1DValueTable[256];
 #define COLOR_MAP_SIZE 5
 __constant__ float  cuConstColorRamp[COLOR_MAP_SIZE][3];
 
+#define BLOCKSIZE 512
+#define SCAN_BLOCK_DIM   BLOCKSIZE
+#include "exclusiveScan.cu_inl"
 
 // including parts of the CUDA code from external files to keep this
 // file simpler and to seperate code that should not be modified
@@ -425,6 +428,73 @@ __global__ void kernelRenderCircles() {
             imgPtr++;
         }
     }
+}
+
+// kernelRenderPixels -- (CUDA device code)
+//
+// every thread render a pixel
+__global__ void 
+kernelRenderPixels(int numThreads) {
+    int pixelX = blockDim.x * blockIdx.x + threadIdx.x;
+    int pixelY = blockDim.y * blockIdx.y + threadIdx.y;
+
+    __shared__ uint influenceCircles[SCAN_BLOCK_DIM]; 
+    __shared__ uint prefixSumOutput[SCAN_BLOCK_DIM];
+    __shared__ uint prefixSumScratch[2 * SCAN_BLOCK_DIM]; 
+    __shared__ uint circles[SCAN_BLOCK_DIM];
+    
+    short imageWidth = cuConstRendererParams.imageWidth;
+    short imageHeight = cuConstRendererParams.imageHeight;
+
+    float invWidth = 1.f / imageWidth;
+    float invHeight = 1.f / imageHeight;
+
+    float2 pixelCenterNorm = make_float2(invWidth * (static_cast<float>(pixelX) + 0.5f),
+                                        invHeight * (static_cast<float>(pixelY) + 0.5f));
+    float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (pixelY * imageWidth + pixelX)]);
+
+    short blockMinX = blockDim.x * blockIdx.x;
+    short blockMaxX = blockMinX + blockDim.x;
+    short blockMinY = blockDim.y * blockIdx.y;
+    short blockMaxY = blockMinY + blockDim.y;
+
+    int linearThreadIndex = threadIdx.y * blockDim.x + threadIdx.x; // 一维Id
+    
+    for(int i = 0; i < cuConstRendererParams.numCircles; i+=SCAN_BLOCK_DIM) { // 分块遍历所有circles
+        int circleId = linearThreadIndex + i;
+        if(circleId < cuConstRendererParams.numCircles) {
+            float3 pos = *((float3 *)&cuConstRendererParams.position[3 * circleId]);
+            float rad = cuConstRendererParams.radius[circleId];
+
+            short minX = static_cast<short>(pos.x - rad);
+            short maxX = static_cast<short>(pos.x + rad) + 1;
+            short minY = static_cast<short>(pos.y - rad);
+            short maxY = static_cast<short>(pos.y + rad) + 1;
+            
+            if(linearThreadIndex < SCAN_BLOCK_DIM && // 这个其实始终成立，因为 SCAN_BLOCK_DIM = BLOCKSIZE
+                !(minX > blockMaxX || maxX < blockMinX || minY > blockMaxY || maxY < blockMinY)) {
+                influenceCircles[linearThreadIndex] = 1;
+            }
+        } else {
+            influenceCircles[linearThreadIndex] = 0;
+        }
+        __syncthreads();
+
+        sharedMemExclusiveScan(linearThreadIndex, influenceCircles, prefixSumOutput, prefixSumScratch, SCAN_BLOCK_DIM);
+        __syncthreads();
+
+        int influenceNum = prefixSumOutput[SCAN_BLOCK_DIM - 1] + influenceCircles[SCAN_BLOCK_DIM - 1]; // + is because it's exclusive
+        if(influenceCircles[linearThreadIndex]) {
+            circles[prefixSumOutput[linearThreadIndex]] = linearThreadIndex;
+        }
+        __syncthreads();
+
+        for(int j = 0; j < influenceNum; j++){
+            float3 pos = *((float3 *)&cuConstRendererParams.position[3 * circles[j]]);
+            shadePixel(linearThreadIndex, pixelCenterNorm, pos, imgPtr);
+        }
+    }
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
