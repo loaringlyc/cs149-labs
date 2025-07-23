@@ -50,7 +50,7 @@ __constant__ float  cuConstNoise1DValueTable[256];
 #define COLOR_MAP_SIZE 5
 __constant__ float  cuConstColorRamp[COLOR_MAP_SIZE][3];
 
-#define BLOCKSIZE 512
+#define BLOCKSIZE 256
 #define SCAN_BLOCK_DIM   BLOCKSIZE
 #include "exclusiveScan.cu_inl"
 
@@ -433,8 +433,7 @@ __global__ void kernelRenderCircles() {
 // kernelRenderPixels -- (CUDA device code)
 //
 // every thread render a pixel
-__global__ void 
-kernelRenderPixels(int numThreads) {
+__global__ void kernelRenderPixels() {
     int pixelX = blockDim.x * blockIdx.x + threadIdx.x;
     int pixelY = blockDim.y * blockIdx.y + threadIdx.y;
 
@@ -474,6 +473,8 @@ kernelRenderPixels(int numThreads) {
             if(linearThreadIndex < SCAN_BLOCK_DIM && // 这个其实始终成立，因为 SCAN_BLOCK_DIM = BLOCKSIZE
                 !(minX > blockMaxX || maxX < blockMinX || minY > blockMaxY || maxY < blockMinY)) {
                 influenceCircles[linearThreadIndex] = 1;
+            } else {
+                influenceCircles[linearThreadIndex] = 0;
             }
         } else {
             influenceCircles[linearThreadIndex] = 0;
@@ -485,13 +486,15 @@ kernelRenderPixels(int numThreads) {
 
         int influenceNum = prefixSumOutput[SCAN_BLOCK_DIM - 1] + influenceCircles[SCAN_BLOCK_DIM - 1]; // + is because it's exclusive
         if(influenceCircles[linearThreadIndex]) {
-            circles[prefixSumOutput[linearThreadIndex]] = linearThreadIndex;
+            circles[prefixSumOutput[linearThreadIndex]] = circleId;
         }
         __syncthreads();
 
-        for(int j = 0; j < influenceNum; j++){
-            float3 pos = *((float3 *)&cuConstRendererParams.position[3 * circles[j]]);
-            shadePixel(linearThreadIndex, pixelCenterNorm, pos, imgPtr);
+        if(pixelX < imageWidth && pixelY < imageHeight) {
+            for(int j = 0; j < influenceNum; j++){
+                float3 pos = *((float3 *)&cuConstRendererParams.position[3 * circles[j]]);
+                shadePixel(circles[j], pixelCenterNorm, pos, imgPtr);
+            }
         }
     }
 
@@ -707,9 +710,9 @@ void
 CudaRenderer::render() {
 
     // 256 threads per block is a healthy number
-    dim3 blockDim(256, 1);
-    dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x);
+    dim3 blockDim(16, 16);
+    dim3 gridDim((image->width + blockDim.x - 1) / blockDim.x, (image->height + blockDim.y - 1) / blockDim.y);
 
-    kernelRenderCircles<<<gridDim, blockDim>>>();
+    kernelRenderPixels<<<gridDim, blockDim>>>();
     cudaDeviceSynchronize();
 }
